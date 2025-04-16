@@ -19,6 +19,7 @@ import MobileMenu from "./components/MobileMenu";
 import MapSection from "./components/MapSection";
 import ModelSection from "./components/ModelSection";
 import { Feature } from "geojson";
+import { MlGeoJsonLayer } from "@mapcomponents/react-maplibre";
 
 const mapCenter: [number, number] = [-74.00599999999997, 40.71279999999999];
 const SIDEBAR_WIDTH = 440;
@@ -45,7 +46,7 @@ const App: React.FC = () => {
   const {
     terrainSettings,
     buildingSettings,
-    setBbox
+    setBbox,bbox
   } = useLayerStore();
 
   // Handle city selection to update both center and bbox
@@ -162,7 +163,6 @@ const App: React.FC = () => {
         center: bboxCenter,
         scale: [1, 1],
         rotate: 0,
-        orientation: "portrait",
         width: 800,
         height: 800,
       }}
@@ -171,6 +171,7 @@ const App: React.FC = () => {
         setBbox(geojson);
       }}
     />
+    <MlGeoJsonLayer geojson={bbox} />
   </>
   );
 };

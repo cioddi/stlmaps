@@ -179,29 +179,29 @@ const BboxSelector = forwardRef((props: Props, ref) => {
 
     // Create container for the marker
     containerRef.current = document.createElement('div');
-    
+
     // Initialize the MapLibre marker - using top-left as anchor point
     const maplibreMarker = new Marker({
       element: containerRef.current,
       anchor: 'top-left',
     });
-    
+
     // Calculate top-left position from center if center is available
     if (options.center) {
       const centerPixel = mapHook.map.map.project(options.center as LngLatLike);
       const _width = options.width;
       const _height = options.height;
-      
+
       // Calculate top-left corner from the center point
       const topLeftPixelX = centerPixel.x - _width / 2;
       const topLeftPixelY = centerPixel.y - _height / 2;
       const topLeftLngLat = mapHook.map.map.unproject([topLeftPixelX, topLeftPixelY]);
-      
+
       maplibreMarker.setLngLat(topLeftLngLat);
     } else {
       maplibreMarker.setLngLat([0, 0]);
     }
-    
+
     maplibreMarker.addTo(mapHook.map.map);
 
     setMarker(maplibreMarker);
@@ -223,23 +223,34 @@ const BboxSelector = forwardRef((props: Props, ref) => {
     if (marker && mapHook.map && options.center) {
       // Convert center coordinates to top-left for the marker
       const centerPixel = mapHook.map.map.project(options.center as LngLatLike);
-      const _width =  options.width;
-      const _height =  options.height;
-      
+      const _width = options.width;
+      const _height = options.height;
+
       // Calculate the top-left point from the center
       const topLeftPixelX = centerPixel.x - _width / 2;
       const topLeftPixelY = centerPixel.y - _height / 2;
-      
+
       // Convert back to geographic coordinates
       const topLeftLngLat = mapHook.map.map.unproject([topLeftPixelX, topLeftPixelY]);
-      
+
       // Update marker position using the top-left coordinates
+      if (containerRef.current) {
+        containerRef.current.style.transform = "";
+        containerRef.current.style.opacity = "0";
+      }
       marker.setLngLat(topLeftLngLat);
+      if (containerRef.current) {
+        setTimeout(() => {
+          if (containerRef.current) {
+        containerRef.current.style.opacity = "1";
+          }
+        },1000);
+      }
     }
   }, [marker, options.center, options.width, options.height, mapHook.map]);
 
   const transformOrigin = useMemo<[number, number]>(() => {
-      return [options.width / 2, options.height / 2];
+    return [options.width / 2, options.height / 2];
   }, [options.width, options.height]);
 
   const transform = useMemo(() => {
@@ -330,28 +341,28 @@ const BboxSelector = forwardRef((props: Props, ref) => {
       const mapContainer = mapHook.map.map.getContainer();
       const mapRect = mapContainer.getBoundingClientRect();
       const targetRect = targetRef.current.getBoundingClientRect();
-      
+
       // Calculate the top-left corner position in pixels relative to the map
       const topLeftX = targetRect.left - mapRect.left;
       const topLeftY = targetRect.top - mapRect.top;
-      
+
       // Convert the pixel coordinates to geographical coordinates
       const topLeftLngLat = mapHook.map.map.unproject([topLeftX, topLeftY]);
-      
+
       // Update the marker position to match the calculated top-left corner
-      marker.setLngLat(topLeftLngLat);
-      
+      //marker.setLngLat(topLeftLngLat);
+
       // Get the center point for state update
       const centerPixelX = topLeftX + _width / 2;
       const centerPixelY = topLeftY + _height / 2;
       const centerLngLat = mapHook.map.map.unproject([centerPixelX, centerPixelY]);
-      
+
       // Update the state with new center coordinates
       setOptions((val: BboxSelectorOptions) => ({
         ...val,
         center: [centerLngLat.lng, centerLngLat.lat],
       }));
-      
+
       // Calculate the remaining corner points for the bbox
       const topRightPixelX = topLeftX + _width;
       const topRightPixelY = topLeftY;
@@ -359,12 +370,12 @@ const BboxSelector = forwardRef((props: Props, ref) => {
       const bottomLeftPixelY = topLeftY + _height;
       const bottomRightPixelX = topLeftX + _width;
       const bottomRightPixelY = topLeftY + _height;
-      
+
       // Convert all corner points to geographical coordinates
       const topRight = mapHook.map.map.unproject([topRightPixelX, topRightPixelY]);
       const bottomLeft = mapHook.map.map.unproject([bottomLeftPixelX, bottomLeftPixelY]);
       const bottomRight = mapHook.map.map.unproject([bottomRightPixelX, bottomRightPixelY]);
-      
+
       // Create the GeoJSON feature representing the bbox
       const _geoJson = {
         type: "Feature",
@@ -383,7 +394,7 @@ const BboxSelector = forwardRef((props: Props, ref) => {
         },
         properties: { bearing: getTargetRotationAngle(targetRef.current) },
       } as Feature;
-      
+
       setBbox(_geoJson);
     }
   }, [mapHook.map, options.width, options.height, transformOrigin]);
