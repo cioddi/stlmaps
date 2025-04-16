@@ -3,7 +3,7 @@ import ReactDOM from "react-dom";
 import Moveable from "react-moveable";
 import { useMap, useMapState } from "@mapcomponents/react-maplibre";
 import * as turf from "@turf/turf";
-import { LngLatLike, Map as MapType, PointLike } from "maplibre-gl";
+import { LngLatLike, Map as MapType, PointLike, Marker } from "maplibre-gl";
 import { Units } from "@turf/turf";
 import { Feature } from "geojson";
 
@@ -14,7 +14,6 @@ export interface BboxSelectorOptions {
   width: number;
   height: number;
   fixedScale?: number | false;
-  orientation: "portrait" | "landscape";
 }
 
 type Props = {
@@ -102,6 +101,8 @@ const BboxSelector = forwardRef((props: Props, ref) => {
     null
   );
   const [bbox, setBbox] = useState<Feature | undefined>(undefined);
+  const [marker, setMarker] = useState<Marker | null>(null);
+  const containerRef = useRef<HTMLDivElement | null>(null);
 
   function onChangeDebounced(bbox: Feature, debounceMs = 1000) {
     if (debounceTimer) clearTimeout(debounceTimer);
@@ -163,6 +164,7 @@ const BboxSelector = forwardRef((props: Props, ref) => {
       }));
     }
     if (!options.center) {
+      // We still need to calculate and store the center point for compatibility
       const _center = mapHook.map.map.unproject([_centerX, _centerY]);
       setOptions((val: BboxSelectorOptions) => ({
         ...val,
@@ -171,48 +173,95 @@ const BboxSelector = forwardRef((props: Props, ref) => {
     }
   }, [mapHook.map, mapState.viewport?.zoom, options?.scale, options?.center]);
 
+  // Initialize the marker when the map is available
   useEffect(() => {
     if (!mapHook.map) return;
+
+    // Create container for the marker
+    containerRef.current = document.createElement('div');
+    
+    // Initialize the MapLibre marker - using top-left as anchor point
+    const maplibreMarker = new Marker({
+      element: containerRef.current,
+      anchor: 'top-left',
+    });
+    
+    // Calculate top-left position from center if center is available
+    if (options.center) {
+      const centerPixel = mapHook.map.map.project(options.center as LngLatLike);
+      const _width = options.width;
+      const _height = options.height;
+      
+      // Calculate top-left corner from the center point
+      const topLeftPixelX = centerPixel.x - _width / 2;
+      const topLeftPixelY = centerPixel.y - _height / 2;
+      const topLeftLngLat = mapHook.map.map.unproject([topLeftPixelX, topLeftPixelY]);
+      
+      maplibreMarker.setLngLat(topLeftLngLat);
+    } else {
+      maplibreMarker.setLngLat([0, 0]);
+    }
+    
+    maplibreMarker.addTo(mapHook.map.map);
+
+    setMarker(maplibreMarker);
 
     mapHook.map.map.setPitch(0);
     const _maxPitch = mapHook.map.map.getMaxPitch();
     mapHook.map.map.setMaxPitch(0);
     updateBbox();
+
     return () => {
+      maplibreMarker.remove();
+      containerRef.current?.remove();
       mapHook.map?.map.setMaxPitch(_maxPitch);
     };
   }, [mapHook.map]);
 
-  const transformOrigin = useMemo<[number, number]>(() => {
-    if (options.orientation === "portrait") {
-      return [options.width / 2, options.height / 2];
-    } else {
-      return [options.height / 2, options.width / 2];
+  // Update marker position when center coordinates change
+  useEffect(() => {
+    if (marker && mapHook.map && options.center) {
+      // Convert center coordinates to top-left for the marker
+      const centerPixel = mapHook.map.map.project(options.center as LngLatLike);
+      const _width =  options.width;
+      const _height =  options.height;
+      
+      // Calculate the top-left point from the center
+      const topLeftPixelX = centerPixel.x - _width / 2;
+      const topLeftPixelY = centerPixel.y - _height / 2;
+      
+      // Convert back to geographic coordinates
+      const topLeftLngLat = mapHook.map.map.unproject([topLeftPixelX, topLeftPixelY]);
+      
+      // Update marker position using the top-left coordinates
+      marker.setLngLat(topLeftLngLat);
     }
-  }, [options.orientation, options.width, options.height]);
+  }, [marker, options.center, options.width, options.height, mapHook.map]);
+
+  const transformOrigin = useMemo<[number, number]>(() => {
+      return [options.width / 2, options.height / 2];
+  }, [options.width, options.height]);
 
   const transform = useMemo(() => {
     if (!mapHook.map || !options.scale) return "none";
 
-    const centerInPixels = mapHook.map.map.project(
-      options.center as LngLatLike
-    );
-    console.log(options.center);
-
-    const x = centerInPixels.x;
-    const y = centerInPixels.y;
+    // We'll still calculate the scale and rotation for the inner element
+    // but rely on the marker for positioning
+    const x = 0;
+    const y = 0;
     const scale =
-      options.scale[0] * getMapZoomScaleModifier([x, y], mapHook.map.map);
+      options.scale[0] * (mapHook.map && options.center ?
+        getMapZoomScaleModifier([
+          mapHook.map.map.project(options.center as LngLatLike).x,
+          mapHook.map.map.project(options.center as LngLatLike).y
+        ], mapHook.map.map) : 1);
 
     const viewportBearing = mapState?.viewport?.bearing
       ? mapState.viewport?.bearing
       : 0;
 
-    const _transform = `translate(${Math.floor(
-      centerInPixels.x - transformOrigin[0]
-    )}px,${Math.floor(centerInPixels.y - transformOrigin[1])}px) rotate(${
-      options.rotate - viewportBearing
-    }deg) scale(${scale},${scale})`;
+    const _transform = `rotate(${options.rotate - viewportBearing
+      }deg) scale(${scale},${scale})`;
 
     if (targetRef.current) targetRef.current.style.transform = _transform;
 
@@ -223,7 +272,6 @@ const BboxSelector = forwardRef((props: Props, ref) => {
     options.scale,
     options.rotate,
     options.center,
-    transformOrigin,
   ]);
 
   useEffect(() => {
@@ -271,68 +319,75 @@ const BboxSelector = forwardRef((props: Props, ref) => {
 
   // Helper function to update the bbox based on current state
   const updateBbox = React.useCallback(() => {
-    if (targetRef.current && mapHook.map && transformOrigin?.[0]) {
-      // apply orientation
+    if (targetRef.current && mapHook.map && marker && transformOrigin?.[0]) {
       let _width = options.width;
       let _height = options.height;
-      if (options.orientation === "portrait") {
-        targetRef.current.style.width = options.width + "px";
-        targetRef.current.style.height = options.height + "px";
-      } else {
-        targetRef.current.style.width = options.height + "px";
-        targetRef.current.style.height = options.width + "px";
-        _width = options.height;
-        _height = options.width;
-      }
-      moveableRef.current?.updateTarget();
+      targetRef.current.style.width = options.width + "px";
+      targetRef.current.style.height = options.height + "px";
+      moveableRef.current?.updateRect();
 
-      const topLeft = mapHook.map.map.unproject(
-        calcElemTransformedPoint(targetRef.current, [0, 0], transformOrigin)
-      );
-      const topRight = mapHook.map.map.unproject(
-        calcElemTransformedPoint(
-          targetRef.current,
-          [_width, 0],
-          transformOrigin
-        )
-      );
-      const bottomLeft = mapHook.map.map.unproject(
-        calcElemTransformedPoint(
-          targetRef.current,
-          [0, _height],
-          transformOrigin
-        )
-      );
-      const bottomRight = mapHook.map.map.unproject(
-        calcElemTransformedPoint(
-          targetRef.current,
-          [_width, _height],
-          transformOrigin
-        )
-      );
-
+      // Get the map container and target element positions
+      const mapContainer = mapHook.map.map.getContainer();
+      const mapRect = mapContainer.getBoundingClientRect();
+      const targetRect = targetRef.current.getBoundingClientRect();
+      
+      // Calculate the top-left corner position in pixels relative to the map
+      const topLeftX = targetRect.left - mapRect.left;
+      const topLeftY = targetRect.top - mapRect.top;
+      
+      // Convert the pixel coordinates to geographical coordinates
+      const topLeftLngLat = mapHook.map.map.unproject([topLeftX, topLeftY]);
+      
+      // Update the marker position to match the calculated top-left corner
+      marker.setLngLat(topLeftLngLat);
+      
+      // Get the center point for state update
+      const centerPixelX = topLeftX + _width / 2;
+      const centerPixelY = topLeftY + _height / 2;
+      const centerLngLat = mapHook.map.map.unproject([centerPixelX, centerPixelY]);
+      
+      // Update the state with new center coordinates
+      setOptions((val: BboxSelectorOptions) => ({
+        ...val,
+        center: [centerLngLat.lng, centerLngLat.lat],
+      }));
+      
+      // Calculate the remaining corner points for the bbox
+      const topRightPixelX = topLeftX + _width;
+      const topRightPixelY = topLeftY;
+      const bottomLeftPixelX = topLeftX;
+      const bottomLeftPixelY = topLeftY + _height;
+      const bottomRightPixelX = topLeftX + _width;
+      const bottomRightPixelY = topLeftY + _height;
+      
+      // Convert all corner points to geographical coordinates
+      const topRight = mapHook.map.map.unproject([topRightPixelX, topRightPixelY]);
+      const bottomLeft = mapHook.map.map.unproject([bottomLeftPixelX, bottomLeftPixelY]);
+      const bottomRight = mapHook.map.map.unproject([bottomRightPixelX, bottomRightPixelY]);
+      
+      // Create the GeoJSON feature representing the bbox
       const _geoJson = {
         type: "Feature",
-        bbox: [topLeft.lng, topLeft.lat, bottomRight.lng, bottomRight.lat],
+        bbox: [topLeftLngLat.lng, topLeftLngLat.lat, bottomRight.lng, bottomRight.lat],
         geometry: {
           type: "Polygon",
           coordinates: [
             [
-              [topLeft.lng, topLeft.lat],
+              [topLeftLngLat.lng, topLeftLngLat.lat],
               [topRight.lng, topRight.lat],
               [bottomRight.lng, bottomRight.lat],
               [bottomLeft.lng, bottomLeft.lat],
-              [topLeft.lng, topLeft.lat],
+              [topLeftLngLat.lng, topLeftLngLat.lat],
             ],
           ],
         },
         properties: { bearing: getTargetRotationAngle(targetRef.current) },
       } as Feature;
-      console.log("update bbox", _geoJson);
+      
       setBbox(_geoJson);
     }
-  }, [mapHook.map, options.width, options.height, options.orientation, transformOrigin]);
-  
+  }, [mapHook.map, options.width, options.height, transformOrigin]);
+
   // Expose updateBbox method through ref
   useImperativeHandle(ref, () => ({
     updateBbox
@@ -341,18 +396,11 @@ const BboxSelector = forwardRef((props: Props, ref) => {
   // Update element styling and position when needed without updating bbox
   useEffect(() => {
     if (targetRef.current && mapHook.map && transformOrigin?.[0]) {
-      // apply orientation
-      if (options.orientation === "portrait") {
-        targetRef.current.style.width = options.width + "px";
-        targetRef.current.style.height = options.height + "px";
-      } else {
-        targetRef.current.style.width = options.height + "px";
-        targetRef.current.style.height = options.width + "px";
-      }
+      targetRef.current.style.width = options.width + "px";
+      targetRef.current.style.height = options.height + "px";
       moveableRef.current?.updateTarget();
     }
   }, [
-    options?.orientation,
     options?.height,
     options?.width,
     transformOrigin,
@@ -360,7 +408,7 @@ const BboxSelector = forwardRef((props: Props, ref) => {
     transform,
   ]);
 
-  return mapHook?.map?.map?._canvas?.parentNode?.parentNode ? (
+  return containerRef.current ? (
     ReactDOM.createPortal(
       <>
         <div
@@ -378,47 +426,93 @@ const BboxSelector = forwardRef((props: Props, ref) => {
           keepRatio={true}
           /* draggable */
           draggable={true}
-          onDrag={(e) => {
-            if (mapHook.map) {
-              let _transformParts = e.transform.split("translate(");
-              _transformParts = _transformParts[1]
-                .split("px)")[0]
-                .split("px, ");
-              const _center = mapHook.map?.map.unproject([
-                parseInt(_transformParts[0]) + transformOrigin[0],
-                parseInt(_transformParts[1]) + transformOrigin[1],
-              ]);
-              setOptions((val: BboxSelectorOptions) => ({
-                ...val,
-                center: [_center.lng, _center.lat],
-              }));
+          onDragStart={(e) => {
+            // Stop propagation of mouse events to prevent map dragging
+            if (e.inputEvent) {
+              e.inputEvent.stopPropagation();
+              e.inputEvent.preventDefault();
+            }
+
+            // Store initial offset for use during drag
+            if (e.inputEvent instanceof MouseEvent && targetRef.current && containerRef.current) {
+              // Get the current element dimensions and position
+              const targetRect = targetRef.current.getBoundingClientRect();
+
+              // Store offsets as data attributes on the container
+              containerRef.current.dataset.offsetX = String(e.inputEvent.clientX - targetRect.left - targetRect.width / 2);
+              containerRef.current.dataset.offsetY = String(e.inputEvent.clientY - targetRect.top - targetRect.height / 2);
             }
           }}
-          onDragEnd={() => {
+          //onDrag={(e) => {
+          //  if (mapHook.map && marker && containerRef.current) {
+          //    // Stop propagation of mouse events to prevent map dragging
+          //    if (e.inputEvent) {
+          //      e.inputEvent.stopPropagation();
+          //      e.inputEvent.preventDefault();
+          //    }
+          //    
+          //    // During drag, just update the DOM element position directly for performance
+          //    // This creates a smoother drag experience without expensive projections
+          //    if (e.inputEvent instanceof MouseEvent) {
+          //      // Get the map container's position and dimensions
+          //      const mapContainer = mapHook.map.map.getContainer();
+          //      const rect = mapContainer.getBoundingClientRect();
+          //      
+          //      // Get the stored offsets from drag start
+          //      const offsetX = parseFloat(containerRef.current.dataset.offsetX || '0');
+          //      const offsetY = parseFloat(containerRef.current.dataset.offsetY || '0');
+          //      
+          //      // Calculate position relative to the map container, adjusting for the offset
+          //      // This ensures the grab point stays under the mouse
+          //      const x = e.inputEvent.clientX - rect.left - offsetX;
+          //      const y = e.inputEvent.clientY - rect.top - offsetY;
+          //      
+          //      // For visual feedback during drag, move the element directly using the DOM
+          //      // This avoids expensive geographical calculations during drag
+          //      containerRef.current.style.left = `${x}px`;
+          //      containerRef.current.style.top = `${y}px`;
+          //    }
+          //  }
+          //}}
+
+          onDrag={e => {
+            // Apply transform during drag
+            e.target.style.transform = e.transform;
+          }}
+          onDragEnd={(e) => {
+            // Important: Do not reset the transform here as we need it for positioning
+            // Let the updateBbox function handle all positioning calculations
             updateBbox();
           }}
           /* scalable */
           scalable={options.fixedScale ? false : true}
+          onScaleStart={(e) => {
+            // Stop propagation of mouse events to prevent map interactions
+            if (e.inputEvent) {
+              e.inputEvent.stopPropagation();
+              e.inputEvent.preventDefault();
+            }
+          }}
           onScale={(e) => {
-            if (mapHook.map) {
-              let _transformParts = e.drag.transform.split("scale(");
-              _transformParts = _transformParts[1].split(")")[0].split(", ");
+            if (mapHook.map && targetRef.current) {
+              // Stop propagation of mouse events
+              if (e.inputEvent) {
+                e.inputEvent.stopPropagation();
+                e.inputEvent.preventDefault();
+              }
 
-              const centerInPixels = mapHook.map.map.project(
-                options.center as LngLatLike
-              );
+              // Apply scale visually during the scale event for better performance
+              // We'll use the scale delta from the event
+              const scaleFactor = e.scale;
 
-              const x = centerInPixels.x;
-              const y = centerInPixels.y;
-
-              const scale =
-                parseFloat(_transformParts[0]) *
-                (1 / getMapZoomScaleModifier([x, y], mapHook.map.map));
-
-              setOptions((val: BboxSelectorOptions) => ({
-                ...val,
-                scale: [scale, scale],
-              }));
+              // Apply the visual scale directly to the element for smooth feedback
+              // This avoids expensive recalculations during scaling
+              const currentTransform = getComputedStyle(targetRef.current).transform;
+              if (currentTransform && currentTransform !== 'none' && targetRef.current) {
+                // We only need to update the visual appearance during scale
+                // The actual state update happens on scaleEnd
+                targetRef.current.style.transform = `${currentTransform} scale(${scaleFactor[0]}, ${scaleFactor[1]})`;
+              }
             }
           }}
           onScaleEnd={() => {
@@ -445,7 +539,7 @@ const BboxSelector = forwardRef((props: Props, ref) => {
           }}
         />
       </>,
-      mapHook.map.map._canvas.parentNode.parentElement as HTMLElement
+      containerRef.current
     )
   ) : (
     <></>
