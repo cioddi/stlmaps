@@ -160,7 +160,7 @@ const App: React.FC = () => {
     <GenerateMeshButton />      <BboxSelector
       ref={bboxSelectorRef}
       options={{
-        center: bboxCenter,
+        topLeft: bboxCenter,
         scale: [1, 1],
         rotate: 0,
         width: 800,
