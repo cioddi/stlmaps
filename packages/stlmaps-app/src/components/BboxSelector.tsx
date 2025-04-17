@@ -185,52 +185,6 @@ const BboxSelector = forwardRef((props: Props, ref) => {
     return [options.width / 2, options.height / 2];
   }, [options.width, options.height]);
 
-  useEffect(() => {
-    // update options.scale if fixedScale was changed
-    if (
-      !mapHook.map ||
-      !options?.topLeft ||
-      !options?.fixedScale ||
-      (typeof options?.fixedScale !== "undefined" &&
-        fixedScaleRef.current === options?.fixedScale)
-    )
-      return;
-
-    fixedScaleRef.current = options.fixedScale;
-    
-    // Calculate the center point from topLeft and dimensions
-    const topLeftPixel = mapHook.map.map.project(options.topLeft as LngLatLike);
-    const centerPixelX = topLeftPixel.x + options.width / 2;
-    const centerPixelY = topLeftPixel.y + options.height / 2;
-    const centerLngLat = mapHook.map.map.unproject([centerPixelX, centerPixelY]);
-    
-    // Create point from center coordinates for turf calculations
-    const point = turf.point([centerLngLat.lng, centerLngLat.lat]);
-    const distance = options.fixedScale * (options.width / 1000);
-
-    const bearing = 90;
-    const _options = { units: "meters" as Units };
-    const destination = turf.destination(point, distance, bearing, _options);
-
-    const centerInPixels = mapHook.map.map.project(
-      point.geometry.coordinates as LngLatLike
-    );
-    const destinationInPixels = mapHook.map.map.project(
-      destination.geometry.coordinates as LngLatLike
-    );
-
-    const scaleFactor =
-      (Math.round(destinationInPixels.x - centerInPixels.x) / options.width) *
-      (1 /
-        getMapZoomScaleModifier(
-          [centerInPixels.x, centerInPixels.y],
-          mapHook.map.map
-        ));
-    setOptions((val: BboxSelectorOptions) => ({
-      ...val,
-      scale: [scaleFactor, scaleFactor],
-    }));
-  }, [mapHook.map, options.width, options.height, options.topLeft, options.fixedScale]);  // Helper function to update the bbox based on current state
   const updateBbox = React.useCallback(() => {
     if (targetRef.current && mapHook.map && marker && transformOrigin?.[0]) {
       moveableRef.current?.updateRect();
@@ -258,13 +212,6 @@ const BboxSelector = forwardRef((props: Props, ref) => {
       const scaleX = actualWidth / options.width;
       const scaleY = actualHeight / options.height;
       
-      // Update the state with new coordinates and scale
-      setOptions((val: BboxSelectorOptions) => ({
-        ...val,
-        topLeft: [topLeftLngLat.lng, topLeftLngLat.lat],
-        scale: [scaleX, scaleY]
-      }));
-
       // Calculate the remaining corner points for the bbox using the actual scaled dimensions
       const topRightPixelX = topLeftX + actualWidth;
       const topRightPixelY = topLeftY;
@@ -299,12 +246,7 @@ const BboxSelector = forwardRef((props: Props, ref) => {
 
       setBbox(_geoJson);
     }
-  }, [mapHook.map, options.width, options.height, transformOrigin]);
-
-  // Expose updateBbox method through ref
-  useImperativeHandle(ref, () => ({
-    updateBbox
-  }));
+  }, [mapHook.map, transformOrigin]);
 
     // Update element styling and position when needed without updating bbox
   useEffect(() => {
