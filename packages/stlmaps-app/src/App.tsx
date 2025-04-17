@@ -159,10 +159,10 @@ const App: React.FC = () => {
       open={openTodoList}
       onClose={() => setOpenTodoList(false)}
     />
-    <GenerateMeshButton />      <BboxSelector
+    <GenerateMeshButton />
+    <BboxSelector
       ref={bboxSelectorRef}
       options={{
-        topLeft: bboxCenter,
         scale: [1, 1],
         rotate: 0,
         width: 200,
