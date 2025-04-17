@@ -1,7 +1,7 @@
 import React, { useRef, useEffect, useMemo, useState, forwardRef, useImperativeHandle } from "react";
 import ReactDOM from "react-dom";
 import Moveable from "react-moveable";
-import { useMap, useMapState } from "@mapcomponents/react-maplibre";
+import { useMap, useMapState, MlGeoJsonLayer } from "@mapcomponents/react-maplibre";
 import * as turf from "@turf/turf";
 import { LngLatLike, Map as MapType, PointLike, Marker } from "maplibre-gl";
 import { Units } from "@turf/turf";
@@ -35,6 +35,9 @@ type Props = {
   ) => void;
   onChange?: (geojson: Feature) => void;
 };
+
+// Mode for the bbox selector
+type BboxSelectorMode = "view" | "edit";
 
 function getTargetRotationAngle(target: HTMLDivElement) {
   const el_style = window.getComputedStyle(target, null);
@@ -82,11 +85,13 @@ function getMapZoomScaleModifier(point: [number, number], _map: MapType) {
 
 /**
  * BboxSelector component renders a transformable (drag, scale, rotate) preview of the desired export or print content
+ * with two modes: view (just displays the bbox) and edit (allows transformation)
  */
 const BboxSelector = forwardRef((props: Props, ref) => {
   const [options, setOptions] = React.useState<BboxSelectorOptions>(
     props.options
   );
+  const [mode, setMode] = useState<BboxSelectorMode>("view");
   const mapState = useMapState({
     mapId: props.mapId,
     watch: { layers: false, viewport: true },
@@ -103,7 +108,26 @@ const BboxSelector = forwardRef((props: Props, ref) => {
   const [bbox, setBbox] = useState<Feature | undefined>(undefined);
   const [marker, setMarker] = useState<Marker | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const previousViewportRef = useRef(mapState.viewport);
 
+  // Function to handle GeoJSON feature click to switch to edit mode
+  const handleFeatureClick = React.useCallback(() => {
+    if (mode === "view") {
+      setMode("edit");
+
+      // Small delay to ensure marker is properly positioned when entering edit mode
+      setTimeout(() => {
+        if (marker && containerRef.current) {
+          containerRef.current.style.opacity = "1";
+        }
+        if (moveableRef.current) {
+          moveableRef.current.updateTarget();
+        }
+      }, 10);
+    }
+  }, [mode, marker]);
+
+  // Debounced onChange handler
   function onChangeDebounced(bbox: Feature, debounceMs = 1000) {
     if (debounceTimer) clearTimeout(debounceTimer);
     const timer = setTimeout(() => {
@@ -112,18 +136,21 @@ const BboxSelector = forwardRef((props: Props, ref) => {
     setDebounceTimer(timer);
   }
 
+  // Update bbox and trigger onChange when it changes
   useEffect(() => {
     if (bbox) {
       onChangeDebounced(bbox);
     }
   }, [bbox]);
 
+  // Sync options with props
   useEffect(() => {
     if (typeof props.setOptions === "function") {
       props.setOptions(options);
     }
   }, [options, props]);
 
+  // Set initial options from props
   useEffect(() => {
     if (props?.options?.topLeft && mapHook.map) {
       const _centerX = Math.round(mapHook.map.map._container.clientWidth / 2);
@@ -144,11 +171,32 @@ const BboxSelector = forwardRef((props: Props, ref) => {
     }
   }, [mapHook.map, props.options?.topLeft]);
 
+  // Handle map changes that should switch back to view mode
+  useEffect(() => {
+    if (!mapState?.viewport) return;
+
+    const currentViewport = mapState.viewport;
+    const previousViewport = previousViewportRef.current;
+
+    if (previousViewport &&
+      (previousViewport.center !== currentViewport.center ||
+        previousViewport.zoom !== currentViewport.zoom ||
+        previousViewport.bearing !== currentViewport.bearing ||
+        previousViewport.pitch !== currentViewport.pitch)) {
+      // Map view has changed, switch to view mode
+      if (mode === "edit") {
+        setMode("view");
+      }
+    }
+
+    // Store the current viewport for future comparison
+    previousViewportRef.current = currentViewport;
+  }, [mapState.viewport, mode]);
+
+  // Initialize default values if not set
   useEffect(() => {
     if (!mapState?.viewport?.zoom || !mapHook.map) return;
-    // if the component was initialized with scale or topLeft as undefined derive those values from the current map view state
 
-    //initialize props if not defined
     const _centerX = Math.round(mapHook.map.map._container.clientWidth / 2);
     const _centerY = Math.round(mapHook.map.map._container.clientHeight / 2);
 
@@ -165,16 +213,16 @@ const BboxSelector = forwardRef((props: Props, ref) => {
       // Calculate default topLeft from map center, offset by half width/height
       const _center = mapHook.map.map.unproject([_centerX, _centerY]);
       const centerPixel = mapHook.map.map.project(_center);
-      
+
       // Default dimensions if not set
       const _width = options.width || 200;
       const _height = options.height || 200;
-      
+
       // Calculate topLeft corner from the center point
       const topLeftPixelX = centerPixel.x - _width / 2;
       const topLeftPixelY = centerPixel.y - _height / 2;
       const topLeftLngLat = mapHook.map.map.unproject([topLeftPixelX, topLeftPixelY]);
-      
+
       setOptions((val: BboxSelectorOptions) => ({
         ...val,
         topLeft: [topLeftLngLat.lng, topLeftLngLat.lat],
@@ -186,8 +234,9 @@ const BboxSelector = forwardRef((props: Props, ref) => {
   useEffect(() => {
     if (!mapHook.map) return;
 
-    // Create container for the marker
+    // Create container for the marker - only used in edit mode
     containerRef.current = document.createElement('div');
+    containerRef.current.style.opacity = mode === "edit" ? "1" : "0";
 
     // Initialize the MapLibre marker - using top-left as anchor point
     const maplibreMarker = new Marker({
@@ -205,7 +254,7 @@ const BboxSelector = forwardRef((props: Props, ref) => {
       const _centerY = Math.round(mapHook.map.map._container.clientHeight / 2);
       const _center = mapHook.map.map.unproject([_centerX, _centerY]);
       const centerPixel = mapHook.map.map.project(_center);
-      
+
       // Calculate top-left corner from the center point
       const topLeftPixelX = centerPixel.x - options.width / 2;
       const topLeftPixelY = centerPixel.y - options.height / 2;
@@ -216,11 +265,14 @@ const BboxSelector = forwardRef((props: Props, ref) => {
         ...val,
         topLeft: [topLeftLngLat.lng, topLeftLngLat.lat]
       }));
-      
+
       maplibreMarker.setLngLat(topLeftLngLat);
     }
 
-    maplibreMarker.addTo(mapHook.map.map);
+    // Only add the marker to the map in edit mode
+    if (mode === "edit") {
+      maplibreMarker.addTo(mapHook.map.map);
+    }
 
     setMarker(maplibreMarker);
 
@@ -236,28 +288,36 @@ const BboxSelector = forwardRef((props: Props, ref) => {
     };
   }, [mapHook.map]);
 
-  // Update marker position when topLeft coordinates change
+  // Update marker visibility and position when mode or topLeft coordinates change
   useEffect(() => {
-    if (marker && mapHook.map && options.topLeft) {
-      // Directly use topLeft coordinates
+    if (!marker || !mapHook.map) return;
+
+    if (mode === "edit") {
+      // Make sure marker is added to the map
+      marker.addTo(mapHook.map.map);
+
       if (containerRef.current) {
-        containerRef.current.style.transform = "";
-        containerRef.current.style.opacity = "0";
-      }
-      
-      // Update marker position
-      marker.setLngLat(options.topLeft as LngLatLike);
-      
-      // Fade back in for smooth transition
-      if (containerRef.current) {
+        // Fade in the marker for edit mode
         setTimeout(() => {
           if (containerRef.current) {
             containerRef.current.style.opacity = "1";
           }
-        }, 200); // Reduced timeout for better UX
+        }, 100);
+      }
+
+      // Update position if we have topLeft coordinates
+      if (options.topLeft) {
+        marker.setLngLat(options.topLeft as LngLatLike);
+      }
+    } else {
+      // In view mode, remove the marker from the map
+      marker.remove();
+
+      if (containerRef.current) {
+        containerRef.current.style.opacity = "0";
       }
     }
-  }, [marker, options.topLeft, mapHook.map]);
+  }, [mode, marker, options.topLeft, mapHook.map]);
 
   const transformOrigin = useMemo<[number, number]>(() => {
     return [options.width / 2, options.height / 2];
@@ -270,7 +330,7 @@ const BboxSelector = forwardRef((props: Props, ref) => {
     // but rely on the marker for positioning
     const x = 0;
     const y = 0;
-    
+
     const scale =
       options.scale[0] * (mapHook.map && options.topLeft ?
         getMapZoomScaleModifier([
@@ -297,8 +357,10 @@ const BboxSelector = forwardRef((props: Props, ref) => {
   ]);
 
   useEffect(() => {
-    moveableRef.current?.updateTarget();
-  }, [transform]);
+    if (mode === "edit" && moveableRef.current) {
+      moveableRef.current.updateTarget();
+    }
+  }, [transform, mode]);
 
   useEffect(() => {
     // update options.scale if fixedScale was changed
@@ -312,13 +374,13 @@ const BboxSelector = forwardRef((props: Props, ref) => {
       return;
 
     fixedScaleRef.current = options.fixedScale;
-    
+
     // Calculate the center point from topLeft and dimensions
     const topLeftPixel = mapHook.map.map.project(options.topLeft as LngLatLike);
     const centerPixelX = topLeftPixel.x + options.width / 2;
     const centerPixelY = topLeftPixel.y + options.height / 2;
     const centerLngLat = mapHook.map.map.unproject([centerPixelX, centerPixelY]);
-    
+
     // Create point from center coordinates for turf calculations
     const point = turf.point([centerLngLat.lng, centerLngLat.lat]);
     const distance = options.fixedScale * (options.width / 1000);
@@ -345,35 +407,41 @@ const BboxSelector = forwardRef((props: Props, ref) => {
       ...val,
       scale: [scaleFactor, scaleFactor],
     }));
-  }, [mapHook.map, options.width, options.height, options.topLeft, options.fixedScale]);  // Helper function to update the bbox based on current state
+  }, [mapHook.map, options.width, options.height, options.topLeft, options.fixedScale]);
+
+  // Helper function to update the bbox based on current state
   const updateBbox = React.useCallback(() => {
     if (targetRef.current && mapHook.map && marker && transformOrigin?.[0]) {
       let _width = options.width;
       let _height = options.height;
       targetRef.current.style.width = options.width + "px";
       targetRef.current.style.height = options.height + "px";
-      moveableRef.current?.updateRect();
+      if (mode === "edit" && moveableRef.current) {
+        moveableRef.current.updateRect();
+      }
 
       // Get the map container and target element positions
       const mapContainer = mapHook.map.map.getContainer();
       const mapRect = mapContainer.getBoundingClientRect();
       const targetRect = targetRef.current.getBoundingClientRect();
-      
+
       // Calculate the top-left corner position in pixels relative to the map
       const topLeftX = targetRect.left - mapRect.left;
       const topLeftY = targetRect.top - mapRect.top;
-      
+
       // Convert the pixel coordinates to geographical coordinates
       const topLeftLngLat = mapHook.map.map.unproject([topLeftX, topLeftY]);
-      
+
       // Update the marker position to match the calculated top-left corner
-      marker.setLngLat(topLeftLngLat);
-      
+      if (mode === "edit" && marker) {
+        marker.setLngLat(topLeftLngLat);
+      }
+
       // Calculate center for backwards compatibility
       const centerPixelX = topLeftX + _width / 2;
       const centerPixelY = topLeftY + _height / 2;
       const centerLngLat = mapHook.map.map.unproject([centerPixelX, centerPixelY]);
-      
+
       // Update the state with new coordinates - primarily topLeft, but also keeping center for compatibility
       setOptions((val: BboxSelectorOptions) => ({
         ...val,
@@ -410,16 +478,20 @@ const BboxSelector = forwardRef((props: Props, ref) => {
             ],
           ],
         },
-        properties: { bearing: getTargetRotationAngle(targetRef.current) },
+        properties: {
+          bearing: getTargetRotationAngle(targetRef.current),
+          mode: mode // Store current mode in the GeoJSON properties
+        },
       } as Feature;
 
       setBbox(_geoJson);
     }
-  }, [mapHook.map, options.width, options.height, transformOrigin]);
+  }, [mapHook.map, options.width, options.height, transformOrigin, mode, marker]);
 
   // Expose updateBbox method through ref
   useImperativeHandle(ref, () => ({
-    updateBbox
+    updateBbox,
+    setMode
   }));
 
   // Update element styling and position when needed without updating bbox
@@ -427,7 +499,9 @@ const BboxSelector = forwardRef((props: Props, ref) => {
     if (targetRef.current && mapHook.map && transformOrigin?.[0]) {
       targetRef.current.style.width = options.width + "px";
       targetRef.current.style.height = options.height + "px";
-      moveableRef.current?.updateTarget();
+      if (mode === "edit" && moveableRef.current) {
+        moveableRef.current.updateTarget();
+      }
     }
   }, [
     options?.height,
@@ -435,15 +509,37 @@ const BboxSelector = forwardRef((props: Props, ref) => {
     transformOrigin,
     mapHook.map,
     transform,
+    mode
   ]);
 
+  // Render nothing if bbox isn't created yet
+  if (!bbox) {
+    return null;
+  }
+
+  // For view mode, just render the GeoJSON layer
+  if (mode === "view") {
+    return (
+      <MlGeoJsonLayer
+        mapId={props.mapId}
+        geojson={bbox}
+        fillOpacity={0.2}
+        fillColor="#3388ff"
+        lineColor="#3388ff"
+        lineWidth={2}
+        onClick={handleFeatureClick}
+      />
+    );
+  }
+
+  // For edit mode, render the moveable component with the marker
   return containerRef.current ? (
     ReactDOM.createPortal(
       <>
         <div
           className="target"
           ref={targetRef}
-          style={{ transform: transform, transformOrigin: "center center" }}
+          style={{ transformOrigin: "center center" }}
         ></div>
         <Moveable
           // eslint-disable-next-line
@@ -484,57 +580,14 @@ const BboxSelector = forwardRef((props: Props, ref) => {
           }}
           /* scalable */
           scalable={options.fixedScale ? false : true}
-          onScaleStart={(e) => {
-            // Stop propagation of mouse events to prevent map interactions
-            if (e.inputEvent) {
-              e.inputEvent.stopPropagation();
-              e.inputEvent.preventDefault();
-            }
-          }}
           onScale={(e) => {
-            if (mapHook.map && targetRef.current) {
-              // Stop propagation of mouse events
-              if (e.inputEvent) {
-                e.inputEvent.stopPropagation();
-                e.inputEvent.preventDefault();
-              }
-
-              // Directly update the transform with the scaling from the event
-              const viewportBearing = mapState?.viewport?.bearing
-                ? mapState.viewport?.bearing
-                : 0;
-              
-              // Calculate proper scale based on event's scale
-              const newScale = options.scale ? 
-                options.scale[0] * e.scale[0] : e.scale[0];
-              
-              // Apply transformation directly rather than compounding
-              const newTransform = `rotate(${options.rotate - viewportBearing}deg) scale(${newScale}, ${newScale})`;
-              targetRef.current.style.transform = newTransform;
-            }
+            e.target.style.transform = e.drag.transform;
           }}
           onScaleEnd={() => {
             updateBbox();
           }}
           /* rotatable */
           rotatable={false}
-          onRotate={(e) => {
-            if (mapHook.map && mapState.viewport) {
-              const _transformParts = e.drag.transform.split("rotate(");
-              const _transformPartString = _transformParts[1].split("deg)")[0];
-              const viewportBearing = mapState?.viewport?.bearing
-                ? mapState.viewport.bearing
-                : 0;
-
-              setOptions((val: BboxSelectorOptions) => ({
-                ...val,
-                rotate: parseFloat(_transformPartString) + viewportBearing,
-              }));
-            }
-          }}
-          onRotateEnd={() => {
-            updateBbox();
-          }}
         />
       </>,
       containerRef.current

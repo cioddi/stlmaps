@@ -52,23 +52,6 @@ function getTargetRotationAngle(target: HTMLDivElement) {
   return deg < 0 ? deg + 360 : deg;
 }
 
-function calcElemTransformedPoint(
-  el: HTMLDivElement,
-  point: [number, number],
-  transformOrigin: [number, number]
-): PointLike {
-  const style = getComputedStyle(el);
-  const p = [point[0] - transformOrigin[0], point[1] - transformOrigin[1]];
-
-  const matrix = new DOMMatrixReadOnly(style.transform);
-
-  // transform pixel coordinates according to the css transform state of "el" (target)
-  return [
-    p[0] * matrix.a + p[1] * matrix.c + matrix.e + transformOrigin[0],
-    p[0] * matrix.b + p[1] * matrix.d + matrix.f + transformOrigin[1],
-  ];
-}
-
 // measure distance in pixels that is used to determine the current css transform.scale relative to the maps viewport.zoom
 const scaleAnchorInPixels = 10;
 
@@ -144,44 +127,6 @@ const BboxSelector = forwardRef((props: Props, ref) => {
     }
   }, [mapHook.map, props.options?.topLeft]);
 
-  useEffect(() => {
-    if (!mapState?.viewport?.zoom || !mapHook.map) return;
-    // if the component was initialized with scale or topLeft as undefined derive those values from the current map view state
-
-    //initialize props if not defined
-    const _centerX = Math.round(mapHook.map.map._container.clientWidth / 2);
-    const _centerY = Math.round(mapHook.map.map._container.clientHeight / 2);
-
-    if (!options.scale) {
-      const scale =
-        1 / getMapZoomScaleModifier([_centerX, _centerY], mapHook.map.map);
-
-      setOptions((val: BboxSelectorOptions) => ({
-        ...val,
-        scale: [scale, scale],
-      }));
-    }
-    if (!options.topLeft) {
-      // Calculate default topLeft from map center, offset by half width/height
-      const _center = mapHook.map.map.unproject([_centerX, _centerY]);
-      const centerPixel = mapHook.map.map.project(_center);
-      
-      // Default dimensions if not set
-      const _width = options.width || 200;
-      const _height = options.height || 200;
-      
-      // Calculate topLeft corner from the center point
-      const topLeftPixelX = centerPixel.x - _width / 2;
-      const topLeftPixelY = centerPixel.y - _height / 2;
-      const topLeftLngLat = mapHook.map.map.unproject([topLeftPixelX, topLeftPixelY]);
-      
-      setOptions((val: BboxSelectorOptions) => ({
-        ...val,
-        topLeft: [topLeftLngLat.lng, topLeftLngLat.lat],
-      }));
-    }
-  }, [mapHook.map, mapState.viewport?.zoom, options?.scale, options?.topLeft, options.width, options.height]);
-
   // Initialize the marker when the map is available
   useEffect(() => {
     if (!mapHook.map) return;
@@ -236,69 +181,9 @@ const BboxSelector = forwardRef((props: Props, ref) => {
     };
   }, [mapHook.map]);
 
-  // Update marker position when topLeft coordinates change
-  useEffect(() => {
-    if (marker && mapHook.map && options.topLeft) {
-      // Directly use topLeft coordinates
-      if (containerRef.current) {
-        containerRef.current.style.transform = "";
-        containerRef.current.style.opacity = "0";
-      }
-      
-      // Update marker position
-      marker.setLngLat(options.topLeft as LngLatLike);
-      
-      // Fade back in for smooth transition
-      if (containerRef.current) {
-        setTimeout(() => {
-          if (containerRef.current) {
-            containerRef.current.style.opacity = "1";
-          }
-        }, 200); // Reduced timeout for better UX
-      }
-    }
-  }, [marker, options.topLeft, mapHook.map]);
-
   const transformOrigin = useMemo<[number, number]>(() => {
     return [options.width / 2, options.height / 2];
   }, [options.width, options.height]);
-
-  const transform = useMemo(() => {
-    if (!mapHook.map || !options.scale) return "none";
-
-    // We'll still calculate the scale and rotation for the inner element
-    // but rely on the marker for positioning
-    const x = 0;
-    const y = 0;
-    
-    const scale =
-      options.scale[0] * (mapHook.map && options.topLeft ?
-        getMapZoomScaleModifier([
-          mapHook.map.map.project(options.topLeft as LngLatLike).x,
-          mapHook.map.map.project(options.topLeft as LngLatLike).y
-        ], mapHook.map.map) : 1);
-
-    const viewportBearing = mapState?.viewport?.bearing
-      ? mapState.viewport?.bearing
-      : 0;
-
-    const _transform = `rotate(${options.rotate - viewportBearing
-      }deg) scale(${scale},${scale})`;
-
-    if (targetRef.current) targetRef.current.style.transform = _transform;
-
-    return _transform;
-  }, [
-    mapHook.map,
-    mapState.viewport,
-    options.scale,
-    options.rotate,
-    options.topLeft,
-  ]);
-
-  useEffect(() => {
-    moveableRef.current?.updateTarget();
-  }, [transform]);
 
   useEffect(() => {
     // update options.scale if fixedScale was changed
@@ -350,8 +235,6 @@ const BboxSelector = forwardRef((props: Props, ref) => {
     if (targetRef.current && mapHook.map && marker && transformOrigin?.[0]) {
       let _width = options.width;
       let _height = options.height;
-      targetRef.current.style.width = options.width + "px";
-      targetRef.current.style.height = options.height + "px";
       moveableRef.current?.updateRect();
 
       // Get the map container and target element positions
@@ -367,18 +250,12 @@ const BboxSelector = forwardRef((props: Props, ref) => {
       const topLeftLngLat = mapHook.map.map.unproject([topLeftX, topLeftY]);
       
       // Update the marker position to match the calculated top-left corner
-      marker.setLngLat(topLeftLngLat);
-      
-      // Calculate center for backwards compatibility
-      const centerPixelX = topLeftX + _width / 2;
-      const centerPixelY = topLeftY + _height / 2;
-      const centerLngLat = mapHook.map.map.unproject([centerPixelX, centerPixelY]);
+      //marker.setLngLat(topLeftLngLat);
       
       // Update the state with new coordinates - primarily topLeft, but also keeping center for compatibility
       setOptions((val: BboxSelectorOptions) => ({
         ...val,
         topLeft: [topLeftLngLat.lng, topLeftLngLat.lat],
-        center: [centerLngLat.lng, centerLngLat.lat],
       }));
 
       // Calculate the remaining corner points for the bbox
@@ -422,7 +299,7 @@ const BboxSelector = forwardRef((props: Props, ref) => {
     updateBbox
   }));
 
-  // Update element styling and position when needed without updating bbox
+    // Update element styling and position when needed without updating bbox
   useEffect(() => {
     if (targetRef.current && mapHook.map && transformOrigin?.[0]) {
       targetRef.current.style.width = options.width + "px";
@@ -433,9 +310,9 @@ const BboxSelector = forwardRef((props: Props, ref) => {
     options?.height,
     options?.width,
     transformOrigin,
-    mapHook.map,
-    transform,
+    mapHook.map
   ]);
+
 
   return containerRef.current ? (
     ReactDOM.createPortal(
@@ -443,7 +320,7 @@ const BboxSelector = forwardRef((props: Props, ref) => {
         <div
           className="target"
           ref={targetRef}
-          style={{ transform: transform, transformOrigin: "center center" }}
+          style={{ transformOrigin: "center center" }}
         ></div>
         <Moveable
           // eslint-disable-next-line
@@ -492,49 +369,13 @@ const BboxSelector = forwardRef((props: Props, ref) => {
             }
           }}
           onScale={(e) => {
-            if (mapHook.map && targetRef.current) {
-              // Stop propagation of mouse events
-              if (e.inputEvent) {
-                e.inputEvent.stopPropagation();
-                e.inputEvent.preventDefault();
-              }
-
-              // Directly update the transform with the scaling from the event
-              const viewportBearing = mapState?.viewport?.bearing
-                ? mapState.viewport?.bearing
-                : 0;
-              
-              // Calculate proper scale based on event's scale
-              const newScale = options.scale ? 
-                options.scale[0] * e.scale[0] : e.scale[0];
-              
-              // Apply transformation directly rather than compounding
-              const newTransform = `rotate(${options.rotate - viewportBearing}deg) scale(${newScale}, ${newScale})`;
-              targetRef.current.style.transform = newTransform;
-            }
+            e.target.style.transform = e.drag.transform;
           }}
           onScaleEnd={() => {
             updateBbox();
           }}
           /* rotatable */
           rotatable={false}
-          onRotate={(e) => {
-            if (mapHook.map && mapState.viewport) {
-              const _transformParts = e.drag.transform.split("rotate(");
-              const _transformPartString = _transformParts[1].split("deg)")[0];
-              const viewportBearing = mapState?.viewport?.bearing
-                ? mapState.viewport.bearing
-                : 0;
-
-              setOptions((val: BboxSelectorOptions) => ({
-                ...val,
-                rotate: parseFloat(_transformPartString) + viewportBearing,
-              }));
-            }
-          }}
-          onRotateEnd={() => {
-            updateBbox();
-          }}
         />
       </>,
       containerRef.current
