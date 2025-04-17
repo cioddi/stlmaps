@@ -8,12 +8,15 @@ import React, {
 } from "react";
 import ReactDOM from "react-dom";
 import Moveable from "react-moveable";
-import { useMap, useMapState } from "@mapcomponents/react-maplibre";
+import {
+  useMap,
+  useMapState,
+  MlGeoJsonLayer,
+} from "@mapcomponents/react-maplibre";
 import * as turf from "@turf/turf";
 import { LngLatLike, Map as MapType, PointLike, Marker } from "maplibre-gl";
 import { Units } from "@turf/turf";
 import { Feature } from "geojson";
-	
 
 export interface BboxSelectorOptions {
   topLeft?: [number, number] | undefined;
@@ -48,12 +51,16 @@ type Props = {
  * BboxSelector component renders a transformable (drag, scale, rotate) preview of the desired export or print content
  */
 const BboxSelector = forwardRef((props: Props, ref) => {
-	
   const targetRef = useRef<HTMLDivElement>(null);
   const moveableRef = useRef<Moveable>(null);
   const mapHook = useMap({
     mapId: props.mapId,
   });
+  const mapState = useMapState({
+    mapId: props.mapId,
+    watch: { viewport: true, sources: false, layers: false },
+  });
+  const [mode, setMode] = useState<"view" | "edit">("view");
   const [debounceTimer, setDebounceTimer] = useState<NodeJS.Timeout | null>(
     null
   );
@@ -75,9 +82,14 @@ const BboxSelector = forwardRef((props: Props, ref) => {
     }
   }, [bbox]);
 
-  // Initialize the marker when the map is available
+  // Switch back to view mode when map state changes
   useEffect(() => {
-    if (!mapHook.map) return;
+    setMode((curr) => (curr === "edit" ? "view" : curr));
+  }, [mapState.viewport]);
+
+  // Initialize the component when the map is available
+  useEffect(() => {
+    if (!mapHook.map || mode !== "edit") return;
 
     // Create container for the marker
     containerRef.current = document.createElement("div");
@@ -88,25 +100,32 @@ const BboxSelector = forwardRef((props: Props, ref) => {
       anchor: "top-left",
     });
 
-    // Set marker position based on available coordinates
-    // Default to center of map if no coordinates are provided
-    const _centerX = Math.round(mapHook.map.map._container.clientWidth / 2);
-    const _centerY = Math.round(mapHook.map.map._container.clientHeight / 2);
-    const _center = mapHook.map.map.unproject([_centerX, _centerY]);
-    const centerPixel = mapHook.map.map.project(_center);
+    if (!mapHook.map || !bbox || bbox.geometry.type !== "Polygon") return;
+    const coords = bbox.geometry.coordinates[0];
+    const [topLeftLng, topLeftLat] = coords[0];
+    const [topRightLng, topRightLat] = coords[1];
+    const [bottomLeftLng, bottomLeftLat] = coords[3];
 
-    // Calculate top-left corner from the center point
-    const topLeftPixelX = centerPixel.x - props.options.width / 2;
-    const topLeftPixelY = centerPixel.y - props.options.height / 2;
+    const topLeftPixel = mapHook.map.map.project([topLeftLng, topLeftLat]);
+    const topRightPixel = mapHook.map.map.project([topRightLng, topRightLat]);
+    const bottomLeftPixel = mapHook.map.map.project([
+      bottomLeftLng,
+      bottomLeftLat,
+    ]);
+
+    const topLeftPixelX = topLeftPixel.x;
+    const topLeftPixelY = topLeftPixel.y;
+    props.options.width = Math.abs(topRightPixel.x - topLeftPixelX);
+    props.options.height = Math.abs(bottomLeftPixel.y - topLeftPixelY);
+    // Convert top-left pixel coordinates to geographic coordinates
     const topLeftLngLat = mapHook.map.map.unproject([
       topLeftPixelX,
       topLeftPixelY,
     ]);
 
+    // Position the marker at the top-left corner
     maplibreMarker.setLngLat(topLeftLngLat);
-
     maplibreMarker.addTo(mapHook.map.map);
-
     setMarker(maplibreMarker);
 
     mapHook.map.map.setPitch(0);
@@ -126,17 +145,18 @@ const BboxSelector = forwardRef((props: Props, ref) => {
     } else {
       updateTargetDimensions();
     }
-    updateBbox();
 
     return () => {
       maplibreMarker.remove();
       containerRef.current?.remove();
       mapHook.map?.map.setMaxPitch(_maxPitch);
     };
-  }, [mapHook.map]);
+  }, [mapHook.map, mode]);
 
   const updateBbox = React.useCallback(() => {
-    if (targetRef.current && mapHook.map && marker) {
+    if (!mapHook.map) return;
+
+    if (targetRef.current && mode === "edit") {
       moveableRef.current?.updateRect();
 
       // Get the map container and target element positions
@@ -148,17 +168,9 @@ const BboxSelector = forwardRef((props: Props, ref) => {
       const actualWidth = targetRect.width;
       const actualHeight = targetRect.height;
 
-      // Calculate the top-left corner position in pixels relative to the map
+      // Calculate the pixel coordinates for all corners relative to the map
       const topLeftX = targetRect.left - mapRect.left;
       const topLeftY = targetRect.top - mapRect.top;
-
-      // Convert the pixel coordinates to geographical coordinates
-      const topLeftLngLat = mapHook.map.map.unproject([topLeftX, topLeftY]);
-
-      // Update the marker position to match the calculated top-left corner
-      //marker.setLngLat(topLeftLngLat);
-
-      // Calculate the remaining corner points for the bbox using the actual scaled dimensions
       const topRightPixelX = topLeftX + actualWidth;
       const topRightPixelY = topLeftY;
       const bottomLeftPixelX = topLeftX;
@@ -166,7 +178,8 @@ const BboxSelector = forwardRef((props: Props, ref) => {
       const bottomRightPixelX = topLeftX + actualWidth;
       const bottomRightPixelY = topLeftY + actualHeight;
 
-      // Convert all corner points to geographical coordinates
+      // Convert all corner points to geographical coordinates using unproject
+      const topLeft = mapHook.map.map.unproject([topLeftX, topLeftY]);
       const topRight = mapHook.map.map.unproject([
         topRightPixelX,
         topRightPixelY,
@@ -180,35 +193,115 @@ const BboxSelector = forwardRef((props: Props, ref) => {
         bottomRightPixelY,
       ]);
 
+      // Update the marker position to match the calculated top-left corner
+      if (marker) {
+        marker.setLngLat(topLeft);
+      }
+
       // Create the GeoJSON feature representing the bbox
       const _geoJson = {
         type: "Feature",
-        bbox: [
-          topLeftLngLat.lng,
-          topLeftLngLat.lat,
-          bottomRight.lng,
-          bottomRight.lat,
-        ],
+        bbox: [topLeft.lng, topLeft.lat, bottomRight.lng, bottomRight.lat],
         geometry: {
           type: "Polygon",
           coordinates: [
             [
-              [topLeftLngLat.lng, topLeftLngLat.lat],
+              [topLeft.lng, topLeft.lat],
               [topRight.lng, topRight.lat],
               [bottomRight.lng, bottomRight.lat],
               [bottomLeft.lng, bottomLeft.lat],
-              [topLeftLngLat.lng, topLeftLngLat.lat],
+              [topLeft.lng, topLeft.lat],
             ],
           ],
         },
       } as Feature;
 
       setBbox(_geoJson);
+    } else {
+      // Create a default bbox in the center using pixel coordinates
+      // Get the map container dimensions
     }
-  }, [mapHook.map, marker]);
+  }, [mapHook.map, marker, mode, props.options.width, props.options.height]);
 
-  return containerRef.current ? (
-    ReactDOM.createPortal(
+  useEffect(() => {
+    if (!mapHook.map || bbox) return;
+
+    const container = mapHook.map.map.getContainer();
+    const centerX = container.clientWidth / 2;
+    const centerY = container.clientHeight / 2;
+
+    // Define a default pixel width and height (adjusted for zoom level)
+    const defaultWidth = props.options.width || 100;
+    const defaultHeight = props.options.height || 100;
+
+    // Calculate pixel coordinates for corners
+    const topLeftPixelX = centerX - defaultWidth / 2;
+    const topLeftPixelY = centerY - defaultHeight / 2;
+    const topRightPixelX = centerX + defaultWidth / 2;
+    const topRightPixelY = centerY - defaultHeight / 2;
+    const bottomRightPixelX = centerX + defaultWidth / 2;
+    const bottomRightPixelY = centerY + defaultHeight / 2;
+    const bottomLeftPixelX = centerX - defaultWidth / 2;
+    const bottomLeftPixelY = centerY + defaultHeight / 2;
+
+    // Convert pixel coordinates to geographical coordinates using unproject
+    const topLeft = mapHook.map.map.unproject([topLeftPixelX, topLeftPixelY]);
+    const topRight = mapHook.map.map.unproject([
+      topRightPixelX,
+      topRightPixelY,
+    ]);
+    const bottomRight = mapHook.map.map.unproject([
+      bottomRightPixelX,
+      bottomRightPixelY,
+    ]);
+    const bottomLeft = mapHook.map.map.unproject([
+      bottomLeftPixelX,
+      bottomLeftPixelY,
+    ]);
+
+    // Create GeoJSON feature from unprojected coordinates
+    const _geoJson = {
+      type: "Feature",
+      bbox: [topLeft.lng, topLeft.lat, bottomRight.lng, bottomRight.lat],
+      geometry: {
+        type: "Polygon",
+        coordinates: [
+          [
+            [topLeft.lng, topLeft.lat],
+            [topRight.lng, topRight.lat],
+            [bottomRight.lng, bottomRight.lat],
+            [bottomLeft.lng, bottomLeft.lat],
+            [topLeft.lng, topLeft.lat],
+          ],
+        ],
+      },
+    } as Feature;
+    setBbox(_geoJson);
+  }, [mapHook.map]);
+
+  const handleBboxClick = () => {
+    setMode("edit");
+  };
+
+  // Render the GeoJSON layer in view mode
+  const renderViewMode = () => {
+    if (!bbox) return null;
+
+    return (
+      <MlGeoJsonLayer
+        geojson={bbox}
+        layerId="bbox-selector-layer"
+        mapId={props.mapId}
+        onClick={handleBboxClick}
+      />
+    );
+  };
+
+  // Render the moveable component in edit mode
+  const renderEditMode = () => {
+    if (!containerRef.current) return null;
+
+    return ReactDOM.createPortal(
       <>
         <div
           className="target"
@@ -279,9 +372,17 @@ const BboxSelector = forwardRef((props: Props, ref) => {
         />
       </>,
       containerRef.current
-    )
-  ) : (
-    <></>
+    );
+  };
+
+  return (
+    <>
+      {/* Always render the view mode GeoJSON component */}
+      {mode === "view" && bbox && renderViewMode()}
+
+      {/* Render the edit mode Moveable component only when in edit mode */}
+      {mode === "edit" && renderEditMode()}
+    </>
   );
 });
 
