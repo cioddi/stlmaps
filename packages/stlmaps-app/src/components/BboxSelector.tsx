@@ -301,10 +301,11 @@ const BboxSelector = forwardRef((props: Props, ref) => {
 
     // Update element styling and position when needed without updating bbox
   useEffect(() => {
-    if (targetRef.current && mapHook.map && transformOrigin?.[0]) {
+    if (targetRef.current && !targetRef.current.style.width && mapHook.map && transformOrigin?.[0]) {
       targetRef.current.style.width = options.width + "px";
       targetRef.current.style.height = options.height + "px";
-      moveableRef.current?.updateTarget();
+      moveableRef.current?.updateRect();
+      updateBbox();
     }
   }, [
     options?.height,
