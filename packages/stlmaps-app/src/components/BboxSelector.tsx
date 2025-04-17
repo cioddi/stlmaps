@@ -233,14 +233,16 @@ const BboxSelector = forwardRef((props: Props, ref) => {
   }, [mapHook.map, options.width, options.height, options.topLeft, options.fixedScale]);  // Helper function to update the bbox based on current state
   const updateBbox = React.useCallback(() => {
     if (targetRef.current && mapHook.map && marker && transformOrigin?.[0]) {
-      let _width = options.width;
-      let _height = options.height;
       moveableRef.current?.updateRect();
 
       // Get the map container and target element positions
       const mapContainer = mapHook.map.map.getContainer();
       const mapRect = mapContainer.getBoundingClientRect();
       const targetRect = targetRef.current.getBoundingClientRect();
+      
+      // Use the actual scaled dimensions from getBoundingClientRect
+      const actualWidth = targetRect.width;
+      const actualHeight = targetRect.height;
       
       // Calculate the top-left corner position in pixels relative to the map
       const topLeftX = targetRect.left - mapRect.left;
@@ -252,19 +254,24 @@ const BboxSelector = forwardRef((props: Props, ref) => {
       // Update the marker position to match the calculated top-left corner
       //marker.setLngLat(topLeftLngLat);
       
-      // Update the state with new coordinates - primarily topLeft, but also keeping center for compatibility
+      // Store the current scale to update options
+      const scaleX = actualWidth / options.width;
+      const scaleY = actualHeight / options.height;
+      
+      // Update the state with new coordinates and scale
       setOptions((val: BboxSelectorOptions) => ({
         ...val,
         topLeft: [topLeftLngLat.lng, topLeftLngLat.lat],
+        scale: [scaleX, scaleY]
       }));
 
-      // Calculate the remaining corner points for the bbox
-      const topRightPixelX = topLeftX + _width;
+      // Calculate the remaining corner points for the bbox using the actual scaled dimensions
+      const topRightPixelX = topLeftX + actualWidth;
       const topRightPixelY = topLeftY;
       const bottomLeftPixelX = topLeftX;
-      const bottomLeftPixelY = topLeftY + _height;
-      const bottomRightPixelX = topLeftX + _width;
-      const bottomRightPixelY = topLeftY + _height;
+      const bottomLeftPixelY = topLeftY + actualHeight;
+      const bottomRightPixelX = topLeftX + actualWidth;
+      const bottomRightPixelY = topLeftY + actualHeight;
 
       // Convert all corner points to geographical coordinates
       const topRight = mapHook.map.map.unproject([topRightPixelX, topRightPixelY]);
