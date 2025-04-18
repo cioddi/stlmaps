@@ -67,6 +67,8 @@ const BboxSelector = forwardRef((props: Props, ref) => {
   const [bbox, setBbox] = useState<Feature | undefined>(undefined);
   const [marker, setMarker] = useState<Marker | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
+  // Add isMounted ref at the component level
+  const isMounted = useRef(true);
 
   function onChangeDebounced(bbox: Feature, debounceMs = 1000) {
     if (debounceTimer) clearTimeout(debounceTimer);
@@ -89,10 +91,9 @@ const BboxSelector = forwardRef((props: Props, ref) => {
 
   // Initialize the component when the map is available
   useEffect(() => {
-    if (!mapHook.map || mode !== "edit") return;
+    if (!mapHook.map || mode !== "edit" || !containerRef.current) return;
 
     // Create container for the marker
-    containerRef.current = document.createElement("div");
 
     // Initialize the MapLibre marker - using top-left as anchor point
     const maplibreMarker = new Marker({
@@ -115,8 +116,8 @@ const BboxSelector = forwardRef((props: Props, ref) => {
 
     const topLeftPixelX = topLeftPixel.x;
     const topLeftPixelY = topLeftPixel.y;
-    props.options.width = Math.abs(topRightPixel.x - topLeftPixelX);
-    props.options.height = Math.abs(bottomLeftPixel.y - topLeftPixelY);
+    const _width = Math.round(Math.abs(topRightPixel.x - topLeftPixelX));
+    const _height = Math.round(Math.abs(bottomLeftPixel.y - topLeftPixelY));
     // Convert top-left pixel coordinates to geographic coordinates
     const topLeftLngLat = mapHook.map.map.unproject([
       topLeftPixelX,
@@ -131,27 +132,37 @@ const BboxSelector = forwardRef((props: Props, ref) => {
     mapHook.map.map.setPitch(0);
     const _maxPitch = mapHook.map.map.getMaxPitch();
     mapHook.map.map.setMaxPitch(0);
-
-    const updateTargetDimensions = () => {
+    
+    // More robust function to update dimensions with retry mechanism
+    const updateTargetDimensions = (retryCount = 0, maxRetries = 10) => {
+      // Only proceed if component is still mounted
+      if (!isMounted.current) return;
+      
       if (targetRef.current && !targetRef.current.style.width) {
-        targetRef.current.style.width = props.options.width + "px";
-        targetRef.current.style.height = props.options.height + "px";
+        targetRef.current.style.width = _width + "px";
+        targetRef.current.style.height = _height + "px";
+        //targetRef.current.style.left = topLeftPixelX + "px";
+        //targetRef.current.style.top = topLeftPixelY + "px";
         moveableRef.current?.updateRect();
-        updateBbox();
+      } else if (retryCount < maxRetries) {
+        // Retry with exponential backoff (100ms, 200ms, 300ms, etc.)
+        setTimeout(() => {
+          updateTargetDimensions(retryCount + 1, maxRetries);
+        }, 100 + retryCount * 100);
+      } else if (process.env.NODE_ENV !== 'production') {
+        console.warn('Failed to initialize targetRef after maximum retries');
       }
     };
-    if (!targetRef.current) {
-      setTimeout(updateTargetDimensions, 100);
-    } else {
-      updateTargetDimensions();
-    }
+    
+    // Start the update process
+    updateTargetDimensions();
 
     return () => {
       maplibreMarker.remove();
       containerRef.current?.remove();
       mapHook.map?.map.setMaxPitch(_maxPitch);
     };
-  }, [mapHook.map, mode]);
+  }, [mapHook.map, mode, bbox]);
 
   const updateBbox = React.useCallback(() => {
     if (!mapHook.map) return;
@@ -194,9 +205,9 @@ const BboxSelector = forwardRef((props: Props, ref) => {
       ]);
 
       // Update the marker position to match the calculated top-left corner
-      if (marker) {
-        marker.setLngLat(topLeft);
-      }
+      //if (marker) {
+      //  marker.setLngLat(topLeft);
+      //}
 
       // Create the GeoJSON feature representing the bbox
       const _geoJson = {
@@ -217,15 +228,14 @@ const BboxSelector = forwardRef((props: Props, ref) => {
       } as Feature;
 
       setBbox(_geoJson);
-    } else {
-      // Create a default bbox in the center using pixel coordinates
-      // Get the map container dimensions
     }
   }, [mapHook.map, marker, mode, props.options.width, props.options.height]);
 
   useEffect(() => {
     if (!mapHook.map || bbox) return;
 
+    // Create a default bbox in the center using pixel coordinates
+    // Get the map container dimensions
     const container = mapHook.map.map.getContainer();
     const centerX = container.clientWidth / 2;
     const centerY = container.clientHeight / 2;
@@ -299,7 +309,7 @@ const BboxSelector = forwardRef((props: Props, ref) => {
 
   // Render the moveable component in edit mode
   const renderEditMode = () => {
-    if (!containerRef.current) return null;
+    containerRef.current = document.createElement("div");
 
     return ReactDOM.createPortal(
       <>
