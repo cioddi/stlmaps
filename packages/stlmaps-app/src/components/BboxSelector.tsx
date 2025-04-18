@@ -63,7 +63,7 @@ const BboxSelector = forwardRef((props: Props, ref) => {
     watch: { viewport: true, sources: false, layers: false },
   });
   const [mode, setMode] = useState<"view" | "edit">("view");
-  const modeRef = useRef<"view" | "edit">("view")
+  const modeRef = useRef<"view" | "edit">("view");
   const [debounceTimer, setDebounceTimer] = useState<NodeJS.Timeout | null>(
     null
   );
@@ -91,14 +91,22 @@ const BboxSelector = forwardRef((props: Props, ref) => {
   useEffect(() => {
     const currentViewportState = JSON.stringify(mapState.viewport);
     setMode((curr) => {
-    console.log(curr,currentViewportState === lastViewPortState, currentViewportState, lastViewPortState)
-      if(modeRef.current === "view" || currentViewportState === lastViewPortState) {
+      console.log(
+        curr,
+        currentViewportState === lastViewPortState,
+        currentViewportState,
+        lastViewPortState
+      );
+      if (
+        modeRef.current === "view" ||
+        currentViewportState === lastViewPortState
+      ) {
         lastViewPortState = currentViewportState;
-      console.log('leave mode on ' + curr)
+        console.log("leave mode on " + curr);
         return modeRef.current;
       }
       lastViewPortState = currentViewportState;
-      console.log('switch to view mode')
+      console.log("switch to view mode");
       modeRef.current = "view";
       return "view";
     });
@@ -106,7 +114,7 @@ const BboxSelector = forwardRef((props: Props, ref) => {
 
   // Initialize the component when the map is available
   useEffect(() => {
-    if (!mapHook.map || mode !== "edit" || !containerRef.current) return;
+    if (!mapHook.map || mode !== "edit") return;
 
     // Create container for the marker
     containerRef.current = document.createElement("div");
@@ -153,7 +161,7 @@ const BboxSelector = forwardRef((props: Props, ref) => {
     const updateTargetDimensions = (retryCount = 0, maxRetries = 10) => {
       // Only proceed if component is still mounted
       if (!isMounted.current) return;
-    
+
       if (targetRef.current && !targetRef.current.style.width) {
         targetRef.current.style.width = _width + "px";
         targetRef.current.style.height = _height + "px";
@@ -162,11 +170,14 @@ const BboxSelector = forwardRef((props: Props, ref) => {
         moveableRef.current?.updateRect();
       } else if (retryCount < maxRetries) {
         // Retry with exponential backoff (100ms, 200ms, 300ms, etc.)
-        setTimeout(() => {
-          updateTargetDimensions(retryCount + 1, maxRetries);
-        }, 100 + retryCount * 100);
-      } else if (process.env.NODE_ENV !== 'production') {
-        console.warn('Failed to initialize targetRef after maximum retries');
+        setTimeout(
+          () => {
+            updateTargetDimensions(retryCount + 1, maxRetries);
+          },
+          100 + retryCount * 100
+        );
+      } else if (process.env.NODE_ENV !== "production") {
+        console.warn("Failed to initialize targetRef after maximum retries");
       }
     };
     moveableRef.current?.updateRect();
@@ -308,7 +319,7 @@ const BboxSelector = forwardRef((props: Props, ref) => {
 
   const handleBboxClick = () => {
     modeRef.current = "edit";
-    setMode(modeRef.current);
+    setMode("edit");
   };
 
   // Render the GeoJSON layer in view mode
@@ -327,6 +338,9 @@ const BboxSelector = forwardRef((props: Props, ref) => {
 
   // Render the moveable component in edit mode
   const renderEditMode = () => {
+    // Prevent rendering the portal if containerRef.current is not available
+    if (!containerRef.current) return null;
+
     return ReactDOM.createPortal(
       <>
         <div
@@ -334,68 +348,68 @@ const BboxSelector = forwardRef((props: Props, ref) => {
           ref={targetRef}
           style={{ transformOrigin: "center center" }}
         ></div>
-        <Moveable
-          // eslint-disable-next-line
-          // @ts-ignore:
-          ref={moveableRef}
-          target={targetRef}
-          container={null}
-          origin={true}
-          keepRatio={true}
-          /* draggable */
-          draggable={true}
-          onDragStart={(e) => {
-            // Stop propagation of mouse events to prevent map dragging
-            if (e.inputEvent) {
-              e.inputEvent.stopPropagation();
-              e.inputEvent.preventDefault();
-            }
+          <Moveable
+            // eslint-disable-next-line
+            // @ts-ignore:
+            ref={moveableRef}
+            target={targetRef}
+            container={null}
+            origin={true}
+            keepRatio={true}
+            /* draggable */
+            draggable={true}
+            onDragStart={(e) => {
+              // Stop propagation of mouse events to prevent map dragging
+              if (e.inputEvent) {
+                e.inputEvent.stopPropagation();
+                e.inputEvent.preventDefault();
+              }
 
-            // Store initial offset for use during drag
-            if (
-              e.inputEvent instanceof MouseEvent &&
-              targetRef.current &&
-              containerRef.current
-            ) {
-              // Get the current element dimensions and position
-              const targetRect = targetRef.current.getBoundingClientRect();
+              // Store initial offset for use during drag
+              if (
+                e.inputEvent instanceof MouseEvent &&
+                targetRef.current &&
+                containerRef.current
+              ) {
+                // Get the current element dimensions and position
+                const targetRect = targetRef.current.getBoundingClientRect();
 
-              // Store offsets as data attributes on the container
-              containerRef.current.dataset.offsetX = String(
-                e.inputEvent.clientX - targetRect.left - targetRect.width / 2
-              );
-              containerRef.current.dataset.offsetY = String(
-                e.inputEvent.clientY - targetRect.top - targetRect.height / 2
-              );
-            }
-          }}
-          onDrag={(e) => {
-            // Apply transform during drag
-            e.target.style.transform = e.transform;
-          }}
-          onDragEnd={(e) => {
-            // Important: Do not reset the transform here as we need it for positioning
-            // Let the updateBbox function handle all positioning calculations
-            updateBbox();
-          }}
-          /* scalable */
-          scalable={props.options.fixedScale ? false : true}
-          onScaleStart={(e) => {
-            // Stop propagation of mouse events to prevent map interactions
-            if (e.inputEvent) {
-              e.inputEvent.stopPropagation();
-              e.inputEvent.preventDefault();
-            }
-          }}
-          onScale={(e) => {
-            e.target.style.transform = e.drag.transform;
-          }}
-          onScaleEnd={() => {
-            updateBbox();
-          }}
-          /* rotatable */
-          rotatable={false}
-        />
+                // Store offsets as data attributes on the container
+                containerRef.current.dataset.offsetX = String(
+                  e.inputEvent.clientX - targetRect.left - targetRect.width / 2
+                );
+                containerRef.current.dataset.offsetY = String(
+                  e.inputEvent.clientY - targetRect.top - targetRect.height / 2
+                );
+              }
+            }}
+            onDrag={(e) => {
+              // Apply transform during drag
+              e.target.style.transform = e.transform;
+            }}
+            onDragEnd={(e) => {
+              // Important: Do not reset the transform here as we need it for positioning
+              // Let the updateBbox function handle all positioning calculations
+              updateBbox();
+            }}
+            /* scalable */
+            scalable={props.options.fixedScale ? false : true}
+            onScaleStart={(e) => {
+              // Stop propagation of mouse events to prevent map interactions
+              if (e.inputEvent) {
+                e.inputEvent.stopPropagation();
+                e.inputEvent.preventDefault();
+              }
+            }}
+            onScale={(e) => {
+              e.target.style.transform = e.drag.transform;
+            }}
+            onScaleEnd={() => {
+              updateBbox();
+            }}
+            /* rotatable */
+            rotatable={false}
+          />
       </>,
       containerRef.current
     );
