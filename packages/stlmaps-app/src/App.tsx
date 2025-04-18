@@ -173,7 +173,6 @@ const App: React.FC = () => {
         setBbox(geojson);
       }}
     />
-    <MlGeoJsonLayer geojson={bbox} />
   </>
   );
 };

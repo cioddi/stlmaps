@@ -35,7 +35,7 @@ const BboxSelectorEditMode: React.FC<BboxSelectorEditModeProps> = ({
     const _maxPitch = mapHook.map.map.getMaxPitch();
     mapHook.map.map.setMaxPitch(0);
     return () => {
-    initializedRef.current = false;
+      initializedRef.current = false;
       maplibreMarkerRef.current?.remove();
       containerRef.current?.remove();
       mapHook.map?.map.setMaxPitch(_maxPitch);
@@ -172,6 +172,9 @@ const BboxSelectorEditMode: React.FC<BboxSelectorEditModeProps> = ({
             ],
           ],
         },
+        properties: {
+          description: "click to edit",
+        },
       } as Feature;
 
       onBboxUpdate(_geoJson);
@@ -245,6 +248,8 @@ const BboxSelectorEditMode: React.FC<BboxSelectorEditModeProps> = ({
         }}
         /* rotatable */
         rotatable={false}
+        edge={true}
+        controlPadding={20}
       />
     </>,
     containerRef.current

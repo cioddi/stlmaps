@@ -1,9 +1,4 @@
-import React, {
-  useRef,
-  useEffect,
-  useState,
-  forwardRef,
-} from "react";
+import React, { useRef, useEffect, useState, forwardRef } from "react";
 import {
   useMap,
   useMapState,
@@ -12,6 +7,7 @@ import {
 import { Marker } from "maplibre-gl";
 import { Feature } from "geojson";
 import BboxSelectorEditMode from "./BboxSelectorEditMode";
+import { Description } from "@mui/icons-material";
 
 export interface BboxSelectorOptions {
   topLeft?: [number, number] | undefined;
@@ -51,10 +47,6 @@ const BboxSelector = forwardRef((props: Props, ref) => {
   const mapHook = useMap({
     mapId: props.mapId,
   });
-  const mapState = useMapState({
-    mapId: props.mapId,
-    watch: { viewport: true, sources: false, layers: false },
-  });
   const [mode, setMode] = useState<"view" | "edit">("view");
   const modeRef = useRef<"view" | "edit">("view");
   const [debounceTimer, setDebounceTimer] = useState<NodeJS.Timeout | null>(
@@ -75,31 +67,6 @@ const BboxSelector = forwardRef((props: Props, ref) => {
       onChangeDebounced(bbox);
     }
   }, [bbox]);
-
-  // Switch back to view mode when map state changes
-  useEffect(() => {
-    const currentViewportState = JSON.stringify(mapState.viewport);
-    setMode((curr) => {
-      console.log(
-        curr,
-        currentViewportState === lastViewPortState,
-        currentViewportState,
-        lastViewPortState
-      );
-      if (
-        modeRef.current === "view" ||
-        currentViewportState === lastViewPortState
-      ) {
-        lastViewPortState = currentViewportState;
-        console.log("leave mode on " + curr);
-        return modeRef.current;
-      }
-      lastViewPortState = currentViewportState;
-      console.log("switch to view mode");
-      modeRef.current = "view";
-      return "view";
-    });
-  }, [mapState.viewport]);
 
   useEffect(() => {
     if (!mapHook.map || bbox) return;
@@ -155,6 +122,9 @@ const BboxSelector = forwardRef((props: Props, ref) => {
           ],
         ],
       },
+      properties: {
+        description: "click to edit",
+      },
     } as Feature;
     setBbox(_geoJson);
   }, [mapHook.map]);
@@ -162,6 +132,15 @@ const BboxSelector = forwardRef((props: Props, ref) => {
   const handleBboxClick = () => {
     modeRef.current = "edit";
     setMode("edit");
+    mapHook.map?.map.once("dragstart", () => {
+      setMode("view");
+    });
+    mapHook.map?.map.once("rotatestart", () => {
+      setMode("view");
+    });
+    mapHook.map?.map.once("zoomstart", () => {
+      setMode("view");
+    });
   };
 
   const handleBboxUpdate = (updatedBbox: Feature) => {
@@ -173,12 +152,37 @@ const BboxSelector = forwardRef((props: Props, ref) => {
     if (!bbox) return null;
 
     return (
-      <MlGeoJsonLayer
-        geojson={bbox}
-        layerId="bbox-selector-layer"
-        mapId={props.mapId}
-        onClick={handleBboxClick}
-      />
+      <>
+        <MlGeoJsonLayer
+          geojson={bbox}
+          layerId="bbox-selector-layer"
+          mapId={props.mapId}
+          onClick={handleBboxClick}
+          type="fill"
+          labelProp="description"
+          options={{
+            paint: {
+              "fill-color": "rgb(200, 200, 200)",
+              "fill-opacity": 0.4,
+              "fill-outline-color": "rgb(81, 132, 190)",
+            },
+          }}
+        />
+        <MlGeoJsonLayer
+          geojson={bbox}
+          layerId="bbox-selector-layer-circles"
+          mapId={props.mapId}
+          type="circle"
+          options={{
+            paint: {
+              "circle-color": "rgb(87, 87, 87)",
+              "circle-radius": 8,
+              "circle-opacity": 0.4,
+              "circle-stroke-color": "rgb(255, 255, 255)",
+            },
+          }}
+        />
+      </>
     );
   };
 

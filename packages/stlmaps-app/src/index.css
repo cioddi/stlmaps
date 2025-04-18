@@ -79,3 +79,10 @@ button:focus-visible {
 .MuiDialog-root {
   z-index: 100000 !important;
 }
+
+.moveable-control {
+    width: 20px !important;
+    height: 20px !important;
+    margin-top: -10px !important;
+    margin-left: -10px !important;
+}
