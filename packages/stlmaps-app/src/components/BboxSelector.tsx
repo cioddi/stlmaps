@@ -27,6 +27,8 @@ export interface BboxSelectorOptions {
   fixedScale?: boolean;
 }
 
+let lastViewPortState = "";
+
 type Props = {
   /**
    * Id of the target MapLibre instance in mapContext
@@ -61,6 +63,7 @@ const BboxSelector = forwardRef((props: Props, ref) => {
     watch: { viewport: true, sources: false, layers: false },
   });
   const [mode, setMode] = useState<"view" | "edit">("view");
+  const modeRef = useRef<"view" | "edit">("view")
   const [debounceTimer, setDebounceTimer] = useState<NodeJS.Timeout | null>(
     null
   );
@@ -86,7 +89,19 @@ const BboxSelector = forwardRef((props: Props, ref) => {
 
   // Switch back to view mode when map state changes
   useEffect(() => {
-    setMode((curr) => (curr === "edit" ? "view" : curr));
+    const currentViewportState = JSON.stringify(mapState.viewport);
+    setMode((curr) => {
+    console.log(curr,currentViewportState === lastViewPortState, currentViewportState, lastViewPortState)
+      if(modeRef.current === "view" || currentViewportState === lastViewPortState) {
+        lastViewPortState = currentViewportState;
+      console.log('leave mode on ' + curr)
+        return modeRef.current;
+      }
+      lastViewPortState = currentViewportState;
+      console.log('switch to view mode')
+      modeRef.current = "view";
+      return "view";
+    });
   }, [mapState.viewport]);
 
   // Initialize the component when the map is available
@@ -94,6 +109,7 @@ const BboxSelector = forwardRef((props: Props, ref) => {
     if (!mapHook.map || mode !== "edit" || !containerRef.current) return;
 
     // Create container for the marker
+    containerRef.current = document.createElement("div");
 
     // Initialize the MapLibre marker - using top-left as anchor point
     const maplibreMarker = new Marker({
@@ -132,12 +148,12 @@ const BboxSelector = forwardRef((props: Props, ref) => {
     mapHook.map.map.setPitch(0);
     const _maxPitch = mapHook.map.map.getMaxPitch();
     mapHook.map.map.setMaxPitch(0);
-    
+
     // More robust function to update dimensions with retry mechanism
     const updateTargetDimensions = (retryCount = 0, maxRetries = 10) => {
       // Only proceed if component is still mounted
       if (!isMounted.current) return;
-      
+    
       if (targetRef.current && !targetRef.current.style.width) {
         targetRef.current.style.width = _width + "px";
         targetRef.current.style.height = _height + "px";
@@ -153,7 +169,8 @@ const BboxSelector = forwardRef((props: Props, ref) => {
         console.warn('Failed to initialize targetRef after maximum retries');
       }
     };
-    
+    moveableRef.current?.updateRect();
+
     // Start the update process
     updateTargetDimensions();
 
@@ -290,7 +307,8 @@ const BboxSelector = forwardRef((props: Props, ref) => {
   }, [mapHook.map]);
 
   const handleBboxClick = () => {
-    setMode("edit");
+    modeRef.current = "edit";
+    setMode(modeRef.current);
   };
 
   // Render the GeoJSON layer in view mode
@@ -309,8 +327,6 @@ const BboxSelector = forwardRef((props: Props, ref) => {
 
   // Render the moveable component in edit mode
   const renderEditMode = () => {
-    containerRef.current = document.createElement("div");
-
     return ReactDOM.createPortal(
       <>
         <div
