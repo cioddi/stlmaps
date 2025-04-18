@@ -29,13 +29,15 @@ export default [
         tsconfig: './tsconfig.json',
         declaration: true,
         declarationDir: 'dist',
+        outDir: 'dist',
       }),
     ],
     external: Object.keys(pkg.dependencies || {}),
   },
-  {
+  // Only include the dts bundle in production build, not in watch mode
+  process.env.ROLLUP_WATCH ? null : {
     input: 'dist/index.d.ts',
     output: [{ file: pkg.types, format: 'esm' }],
     plugins: [dts()],
   },
-];
+].filter(Boolean);
